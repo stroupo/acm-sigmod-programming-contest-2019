@@ -1,18 +1,18 @@
-#include <array>
-#include <cstring>
 #include <fcntl.h>
-#include <fstream>
-#include <iostream>
-#include <mutex>
 #include <omp.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <array>
+#include <cstring>
+#include <fstream>
+#include <iostream>
+#include <mutex>
 #include <vector>
 
-#include <algorithm>
 #include <stdint.h>
-#include <unistd.h>
 #include <sys/types.h>
+#include <unistd.h>
+#include <algorithm>
 
 using namespace std;
 using namespace std::chrono;
@@ -22,13 +22,13 @@ constexpr int record_size = 100;
 using record = array<uint8_t, record_size>;
 
 void simple_sort(const string &input_path, const string &output_path) {
-
-  struct stat stats{};
+  struct stat stats {};
   int fd = open(input_path.c_str(), O_RDONLY);
   fstat(fd, &stats);
 
-  auto size_in_bytes = (size_t) stats.st_size;
-  auto *arr_source = static_cast<uint8_t *>(mmap64(nullptr, size_in_bytes, PROT_READ, MAP_PRIVATE, fd, 0));
+  auto size_in_bytes = (size_t)stats.st_size;
+  auto *arr_source = static_cast<uint8_t *>(
+      mmap64(nullptr, size_in_bytes, PROT_READ, MAP_PRIVATE, fd, 0));
 
   /*
    * lcm 100 and 4096 is 102400
@@ -44,7 +44,8 @@ void simple_sort(const string &input_path, const string &output_path) {
 #pragma omp for schedule(dynamic)
   for (int64_t i = 0; i < N + is_remainder; ++i) {
     for (int64_t j = i * lcm; j < min((i + 1) * lcm, size_in_bytes); j += 100) {
-      auto const bucked_id = __builtin_bswap16(*reinterpret_cast<uint16_t *>(&arr_source[j]));
+      auto const bucked_id =
+          __builtin_bswap16(*reinterpret_cast<uint16_t *>(&arr_source[j]));
       lock_guard<mutex> lock(mutex_vector[bucked_id]);
       buckets[bucked_id].push_back(*reinterpret_cast<record *>(&arr_source[j]));
     }
@@ -66,19 +67,23 @@ void simple_sort(const string &input_path, const string &output_path) {
   int fd2 = open(output_path.c_str(), O_RDWR | O_CREAT, (mode_t)0600);
   lseek(fd2, size_in_bytes - 1, SEEK_SET);
   write(fd2, "", 1);
-  auto *arr_sink = (record *)mmap64(nullptr, size_in_bytes, PROT_READ | PROT_WRITE, MAP_SHARED, fd2, 0);
+  auto *arr_sink = (record *)mmap64(nullptr, size_in_bytes,
+                                    PROT_READ | PROT_WRITE, MAP_SHARED, fd2, 0);
 
 #pragma omp parallel for schedule(dynamic)
-    for (int64_t i = 0; i < 256 * 256; ++i) {
-      std::sort(buckets[i].begin(), buckets[i].end(), [](const record &left, const record &right) {
-        return __builtin_bswap64(*reinterpret_cast<const uint64_t *>(&left[2]))
-          <= __builtin_bswap64(*reinterpret_cast<const uint64_t *>(&right[2]));
-      });
-      for (int32_t j = 0; j < buckets[i].size(); ++j) {
-        arr_sink[prefix_sum[i] + j] = buckets[i][j];
-      }
-      msync(arr_sink + prefix_sum[i], buckets[i].size() * record_size, MS_SYNC);
+  for (int64_t i = 0; i < 256 * 256; ++i) {
+    std::sort(buckets[i].begin(), buckets[i].end(),
+              [](const record &left, const record &right) {
+                return __builtin_bswap64(
+                           *reinterpret_cast<const uint64_t *>(&left[2])) <=
+                       __builtin_bswap64(
+                           *reinterpret_cast<const uint64_t *>(&right[2]));
+              });
+    for (int32_t j = 0; j < buckets[i].size(); ++j) {
+      arr_sink[prefix_sum[i] + j] = buckets[i][j];
     }
+    msync(arr_sink + prefix_sum[i], buckets[i].size() * record_size, MS_SYNC);
+  }
   munmap(arr_sink, size_in_bytes);
   close(fd2);
 }
